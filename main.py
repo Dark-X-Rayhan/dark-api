@@ -1,75 +1,84 @@
 import json
+import time
 from fastapi import FastAPI
 from websocket import create_connection
-from datetime import datetime, timedelta
+from datetime import datetime
 
 app = FastAPI()
 
-# আপনার কপি করা কুকি টোকেনটি এখানে সিঙ্গেল কোটেশনের ভেতরে বসান
-# 'token=...' বা পুরাটা যেটা আপনি কপি করেছেন।
-QUOTEX_COOKIE = "lang=en; _ga=GA1.1.453634495.1773337729; __vid1=89f387f95a92729124e9994373142ae3;"
+# আপনার লাইভ সেশন কুকি
+LIVE_COOKIE = "lang=en; _ga=GA1.1.453634495.1773337729; __vid1=89f387f95a92729124e9994373142ae3; activeAccount=live;"
 
-@app.get("/")
-async def root():
-    return {"status": "Quotex Live Bridge Active", "owner": "DARK-X-RAYHAN"}
+# আপনার ৫২টি পেয়ার
+PAIRS = [
+    "AUDCAD_otc", "AUDCHF_otc", "AUDJPY_otc", "AUDNZD_otc", "AUDUSD_otc", "AXP_otc",
+    "BABA_otc", "BRLUSD_otc", "BTCUSD_otc", "CADCHF_otc", "CADJPY_otc", "CHFJPY_otc",
+    "EURAUD_otc", "EURCAD_otc", "EURCHF_otc", "EURGBP_otc", "EURJPY_otc", "EURNZD_otc",
+    "EURSGD_otc", "EURUSD_otc", "FB_otc", "GBPAUD_otc", "GBPCAD_otc", "GBPCHF_otc",
+    "GBPJPY_otc", "GBPNZD_otc", "GBPUSD_otc", "GOOG_otc", "INTC_otc", "JNJ_otc",
+    "KO_otc", "MCD_otc", "MSFT_otc", "NZDCAD_otc", "NZDCHF_otc", "NZDJPY_otc",
+    "NZDUSD_otc", "PFE_otc", "PG_otc", "USDBDT_otc", "USDCAD_otc", "USDCHF_otc",
+    "USDCOP_otc", "USDDZD_otc", "USDEGP_otc", "USDIDR_otc", "USDINR_otc", "USDJPY_otc",
+    "USDMXN_otc", "USDNGN_otc", "USDPKR_otc", "USDTRY_otc", "USDZAR_otc", "XAUUSD_otc"
+]
 
-@app.get("/Qx/Qx.php")
-async def get_live_data(pair: str = "USDBDT_otc", count: int = 10):
-    pair = pair.upper()
-    data_list = []
-    
+def fetch_quotex_candle(pair):
     try:
-        # Quotex WebSocket-এ কানেক্ট হওয়া (এটি ফ্রি সার্ভারে কাজ করবে)
+        # Quotex WebSocket কানেকশন
         ws = create_connection(
             "wss://ws2.qxbroker.com/socket.io/?EIO=3&transport=websocket",
-            header={"Cookie": QUOTEX_COOKIE}
+            header={"Cookie": LIVE_COOKIE},
+            timeout=7
         )
         
-        # মার্কেট ডাটা সাবস্ক্রাইব করা
-        ws.send(f'42["mt_subscribe","{pair}"]')
+        # ডাটা সাবস্ক্রাইব
+        ws.send(f'42["mt_subscribe","{pair.upper()}"]')
         
-        # লাইভ ডাটা রিসিভ করা (এখানে ১টি ক্যান্ডেল ডাটা আসবে)
-        # কিন্তু আপনি ১০০টি চাইলে হিস্টোরিক্যাল ডাটার জন্য এই লজিকটি কাজ করবে:
-        now = datetime.now()
-        
-        # আমরা WebSocket থেকে শুধু কারেন্ট প্রাইসটা নিচ্ছি কালার নিশ্চিত করতে
-        # বাকি হিস্টোরিটা টাইমস্ট্যাম্প অনুযায়ী জেনারেট হবে যাতে চার্ট ঠিক থাকে
-        for i in range(count):
-            dt = now - timedelta(minutes=i)
-            ts = dt.strftime("%Y-%m-%d %H:%M:00")
-            
-            # একটি অ্যালগরিদম যা বর্তমান মিনিটের ডাটাকে লাইভ রাখে
-            import random
-            random.seed(hash(pair) + int(dt.timestamp() / 60))
-            
-            # অরিজিনাল প্রাইস রেঞ্জ
-            base = 128.25 if "BDT" in pair else 1.1025
-            if "BTC" in pair: base = 68000.0
-            
-            o = round(base + random.uniform(-0.01, 0.01), 5)
-            c = round(o + random.uniform(-0.008, 0.008), 5)
-            
-            data_list.append({
-                "id": str(i + 1),
-                "pair": pair,
-                "timeframe": "M1",
-                "candle_time": ts,
-                "open": str(o).replace('.', ','),
-                "high": f"{max(o,c)+0.002:.5f}",
-                "low": f"{min(o,c)-0.002:.5f}",
-                "close": f"{c:.5f}",
-                "volume": str(random.randint(50, 200)),
-                "color": "green" if c > o else "red",
-                "created_at": ts
-            })
-            
+        # লাইভ টিক ডাটা পাওয়ার চেষ্টা
+        for _ in range(8):
+            msg = ws.recv()
+            if "mt_tick" in msg:
+                # মেসেজ থেকে ডাটা পার্সিং
+                res = json.loads(msg[2:])
+                ws.close()
+                return res[1]
         ws.close()
-        return {
-            "Owner_Developer": "DARK-X-RAYHAN",
-            "success": True,
-            "data": data_list
-        }
+    except:
+        return None
 
-    except Exception as e:
-        # যদি WebSocket ফেইল করে তবে ব্যাকআপ ডাটা দিবে
-        return {"success": False, "error": str(e)}
+@app.get("/")
+async def home():
+    return {"status": "Live Session Active", "owner": "DARK-X-RAYHAN"}
+
+@app.get("/Qx/Qx.php")
+async def get_real_time_data(pair: str = "USDBDT_otc", count: int = 1):
+    target_pair = pair.lower()
+    
+    # লাইভ ডাটা নিয়ে আসা
+    qx_data = fetch_quotex_candle(target_pair)
+    
+    if not qx_data:
+        return {"success": False, "message": "Failed to sync live data. Refresh Cookie."}
+
+    # Quotex থেকে আসা রিয়েল ডাটা
+    o = qx_data.get('open')
+    c = qx_data.get('close')
+    h = qx_data.get('high')
+    l = qx_data.get('low')
+    
+    color = "green" if float(c) > float(o) else "red" if float(c) < float(o) else "doji"
+
+    return {
+        "Owner_Developer": "DARK-X-RAYHAN",
+        "success": True,
+        "pair": target_pair.upper(),
+        "data": [{
+            "id": "1",
+            "candle_time": datetime.now().strftime("%Y-%m-%d %H:%M:00"),
+            "open": str(o).replace('.', ','),
+            "high": str(h),
+            "low": str(l),
+            "close": str(c),
+            "color": color
+        }]
+    }
